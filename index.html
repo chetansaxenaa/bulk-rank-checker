@@ -72,7 +72,7 @@
   .bar-fill{height:100%;width:0%;background:var(--pine);border-radius:99px;transition:width .25s}
 
   /* summary chips */
-  .summary{display:none;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+  .summary{display:none;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:16px}
   .summary.active{display:grid}
   @media(max-width:600px){.summary{grid-template-columns:repeat(2,1fr)}}
   .chip{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;text-align:center}
@@ -82,6 +82,7 @@
   .chip.top10 .n{color:var(--link-blue)}
   .chip.top30 .n{color:var(--amber)}
   .chip.nf .n{color:var(--red)}
+  .chip.mentions .n{color:#6a3fb0}
 
   /* results table */
   .results-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:10px}
@@ -155,6 +156,10 @@
         <input type="text" id="domain" placeholder="example.com">
         <div class="hint">No https:// needed.</div>
 
+        <label for="brand">Brand name <span style="text-transform:none;font-weight:400">(optional)</span></label>
+        <input type="text" id="brand" placeholder="e.g. Acme, Acme Corp">
+        <div class="hint">Flags results that mention this name in the title/snippet, even when they don't link to you.</div>
+
         <div class="row2">
           <div>
             <label for="country">Country</label>
@@ -219,6 +224,7 @@
         <div class="chip top10"><div class="n" id="sTop10">0</div><div class="l">Top 10</div></div>
         <div class="chip top30"><div class="n" id="sTop30">0</div><div class="l">11–30</div></div>
         <div class="chip nf"><div class="n" id="sNf">0</div><div class="l">Not in top <span id="sDepth">100</span></div></div>
+        <div class="chip mentions" id="sMentionsChip" style="display:none"><div class="n" id="sMentions">0</div><div class="l">Brand mentions</div></div>
       </div>
 
       <div class="card">
@@ -230,6 +236,7 @@
               <option value="ranked">Ranked only</option>
               <option value="top10">Top 10 only</option>
               <option value="nf">Not found only</option>
+              <option value="mentions">Brand mentions only</option>
             </select>
             <button class="btn btn-export" id="copyBtn" disabled>Copy all</button>
             <button class="btn btn-export" id="csvBtn" disabled>Export CSV</button>
@@ -243,6 +250,7 @@
                 <th data-sort="pos">Position ↕</th>
                 <th>Location checked</th>
                 <th>Ranking page</th>
+                <th id="mentionsHeader" style="display:none">Brand mentions</th>
               </tr>
             </thead>
             <tbody id="tbody">
@@ -584,6 +592,8 @@ async function fetchPage(kw, cfg, page, loc){
   return data.organic || [];
 }
 
+function escapeRegExp(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
 async function checkKeyword(kw, cfg){
   // Resolve the exact location for THIS keyword:
   // 0) manual location forced for every keyword (overrides everything below)
@@ -597,10 +607,16 @@ async function checkKeyword(kw, cfg){
   }
   const locLabel = loc || (cfg.countryName + " (country-wide)");
 
+  const brandRe = cfg.brand ? new RegExp('\\b'+escapeRegExp(cfg.brand)+'\\b','i') : null;
+  const mentions = [];   // {pos, in:'title'|'snippet', title, url}
+
   // Google only returns ~10 results per request now, so we walk page by page
   // (1-10, 11-20, ...) and stop the moment the domain is found. Saves credits too.
+  // If brand-mention tracking is on, we keep scanning to full depth instead of
+  // stopping early, since mentions can appear anywhere in the results.
   const maxPages = Math.ceil(cfg.depth / 10);
   let scanned = 0;
+  let domainPos = null, domainTitle = "", domainUrl = "";
   for(let page=1; page<=maxPages; page++){
     let organic;
     let ok = false;
@@ -616,15 +632,23 @@ async function checkKeyword(kw, cfg){
     for(let i=0;i<organic.length;i++){
       const item = organic[i];
       const absPos = (page-1)*10 + i + 1;
-      if(item.link && matchesDomain(item.link, cfg.domain)){
-        return { kw, pos: absPos, title: item.title || item.link, url: item.link, scanned: absPos, loc: locLabel };
+      if(domainPos===null && item.link && matchesDomain(item.link, cfg.domain)){
+        domainPos = absPos; domainTitle = item.title || item.link; domainUrl = item.link;
+      }
+      if(brandRe){
+        const inTitle = brandRe.test(item.title||"");
+        const inSnippet = !inTitle && brandRe.test(item.snippet||"");
+        if(inTitle || inSnippet){
+          mentions.push({ pos: absPos, in: inTitle?'title':'snippet', title: item.title||item.link, url: item.link||"" });
+        }
       }
     }
     scanned += organic.length;
     if(organic.length === 0) break;           // no more results exist
+    if(domainPos!==null && !brandRe) break;    // early stop — no mention tracking needed
     if(page < maxPages) await new Promise(r=>setTimeout(r, 250));
   }
-  return { kw, pos: null, title:"", url:"", scanned, loc: locLabel };
+  return { kw, pos: domainPos, title: domainTitle, url: domainUrl, scanned, loc: locLabel, mentions };
 }
 
 /* ---------------- run ---------------- */
@@ -644,6 +668,7 @@ async function run(){
 
   const cfg = {
     key, domain,
+    brand: $('brand').value.trim(),
     country: $('country').value,
     countryName: $('country').options[$('country').selectedIndex].text,
     city: $('city').value.trim(),
@@ -657,13 +682,17 @@ async function run(){
   $('runBtn').disabled = true;
   $('progressWrap').classList.add('active');
   $('sDepth').textContent = cfg.depth;
+  $('mentionsHeader').style.display = cfg.brand ? '' : 'none';
+  $('sMentionsChip').style.display = cfg.brand ? '' : 'none';
   renderTable();
 
   const CONCURRENCY = 2;
   let done = 0, fatal = false;
-  $('statusNote').textContent = cfg.forceLoc && cfg.city
-    ? "Checking every keyword from: "+cfg.city
-    : ($('autoLoc').checked ? "Detecting keyword locations worldwide as it runs — first pass of a new city takes ~1s, repeats are instant." : "");
+  $('statusNote').textContent = cfg.brand
+    ? "Brand mention tracking on — scanning full depth for every keyword (won't stop early)."
+    : (cfg.forceLoc && cfg.city
+        ? "Checking every keyword from: "+cfg.city
+        : ($('autoLoc').checked ? "Detecting keyword locations worldwide as it runs — first pass of a new city takes ~1s, repeats are instant." : ""));
 
   for(let i=0; i<kws.length && !stopFlag && !fatal; i+=CONCURRENCY){
     const batch = kws.slice(i, i+CONCURRENCY);
@@ -708,6 +737,7 @@ function updateSummary(){
   $('sTop10').textContent = ranked.filter(r=>r.pos<=10).length;
   $('sTop30').textContent = ranked.filter(r=>r.pos>10 && r.pos<=30).length;
   $('sNf').textContent    = results.filter(r=>!r.pos).length;
+  $('sMentions').textContent = results.reduce((n,r)=> n + (r.mentions? r.mentions.length : 0), 0);
 }
 
 $('filter').addEventListener('change', renderTable);
@@ -729,12 +759,21 @@ function badge(r){
 }
 function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 
+function mentionsCell(r){
+  if(!r.mentions || r.mentions.length===0) return '<span style="color:var(--ink-soft);font-size:12.5px">—</span>';
+  const positions = r.mentions.map(m=>m.pos).join(', ');
+  return '<span style="font-family:var(--mono);font-size:12.5px;color:#6a3fb0">'+r.mentions.length+' mention'+(r.mentions.length>1?'s':'')+
+    '</span><br><span style="font-size:11.5px;color:var(--ink-soft)">pos '+esc(positions)+'</span>';
+}
+
 function renderTable(){
   const f = $('filter').value;
+  const showMentions = $('mentionsHeader').style.display !== 'none';
   let rows = results.filter(r=>{
     if(f==="ranked") return !!r.pos;
     if(f==="top10")  return r.pos && r.pos<=10;
     if(f==="nf")     return !r.pos;
+    if(f==="mentions") return r.mentions && r.mentions.length>0;
     return true;
   });
   if(sortKey==="kw")  rows = rows.slice().sort((a,b)=> sortAsc? a.kw.localeCompare(b.kw) : b.kw.localeCompare(a.kw));
@@ -743,8 +782,9 @@ function renderTable(){
     return sortAsc? pa-pb : pb-pa;
   });
   const tb = $('tbody');
+  const cols = showMentions ? 5 : 4;
   if(rows.length===0){
-    tb.innerHTML = '<tr><td colspan="4"><div class="empty"><div class="big">'+
+    tb.innerHTML = '<tr><td colspan="'+cols+'"><div class="empty"><div class="big">'+
       (results.length? "Nothing matches this filter" : "No results yet")+'</div>'+
       (results.length? "Try a different filter above." : "Paste your keywords, add your key, and hit “Check rankings”.")+
       '</div></td></tr>';
@@ -756,16 +796,23 @@ function renderTable(){
     else if(!r.pos) page = '<span style="color:var(--ink-soft);font-size:12.5px">Not found — scanned '+(r.scanned||0)+' results</span>';
     else page = '<div class="serp-cell"><a class="t" href="'+esc(r.url)+'" target="_blank" rel="noopener">'+esc(r.title)+'</a><span class="u">'+esc(r.url)+'</span></div>';
     const loc = '<span style="font-family:var(--mono);font-size:11.5px;color:var(--ink-soft)">'+esc(r.loc||"")+'</span>';
-    return '<tr><td class="kw">'+esc(r.kw)+'</td><td>'+badge(r)+'</td><td>'+loc+'</td><td>'+page+'</td></tr>';
+    const mentionsTd = showMentions ? '<td>'+mentionsCell(r)+'</td>' : '';
+    return '<tr><td class="kw">'+esc(r.kw)+'</td><td>'+badge(r)+'</td><td>'+loc+'</td><td>'+page+'</td>'+mentionsTd+'</tr>';
   }).join('');
 }
 
 /* ---------------- CSV + Copy ---------------- */
 $('csvBtn').addEventListener('click', ()=>{
-  const head = "Keyword,Position,Location Checked,Ranking URL\n";
+  const hasBrand = !!$('brand').value.trim();
+  const head = "Keyword,Position,Location Checked,Ranking URL"+(hasBrand? ",Brand Mentions,Mention Positions":"")+"\n";
   const body = results.map(r=>{
     const q = s => '"'+String(s||"").replace(/"/g,'""')+'"';
-    return [q(r.kw), r.pos||"Not found", q(r.loc||""), q(r.url)].join(",");
+    const row = [q(r.kw), r.pos||"Not found", q(r.loc||""), q(r.url)];
+    if(hasBrand){
+      row.push((r.mentions||[]).length);
+      row.push(q((r.mentions||[]).map(m=>m.pos).join("; ")));
+    }
+    return row.join(",");
   }).join("\n");
   const blob = new Blob([head+body], {type:"text/csv"});
   const a = document.createElement('a');
@@ -780,15 +827,23 @@ $('copyBtn').addEventListener('click', async ()=>{
   const domain = cleanDomain($('domain').value);
   const date = new Date().toISOString().slice(0,10);
   const ranked = results.filter(r=>r.pos);
+  const hasBrand = !!$('brand').value.trim();
+  const totalMentions = results.reduce((n,r)=> n + (r.mentions? r.mentions.length : 0), 0);
   const header = "Ranking Report — "+domain+" — "+date+"\n"+
     "Top 3: "+ranked.filter(r=>r.pos<=3).length+
     "  |  Top 10: "+ranked.filter(r=>r.pos<=10).length+
     "  |  11–30: "+ranked.filter(r=>r.pos>10&&r.pos<=30).length+
-    "  |  Not found: "+results.filter(r=>!r.pos).length+"\n\n"+
-    "Keyword\tPosition\tLocation Checked\tRanking URL\n";
-  const body = results.map(r=>
-    [r.kw, r.pos||"Not found", r.loc||"", r.url||""].join("\t")
-  ).join("\n");
+    "  |  Not found: "+results.filter(r=>!r.pos).length+
+    (hasBrand? "  |  Brand mentions: "+totalMentions : "")+"\n\n"+
+    "Keyword\tPosition\tLocation Checked\tRanking URL"+(hasBrand? "\tBrand Mentions\tMention Positions":"")+"\n";
+  const body = results.map(r=>{
+    const row = [r.kw, r.pos||"Not found", r.loc||"", r.url||""];
+    if(hasBrand){
+      row.push((r.mentions||[]).length);
+      row.push((r.mentions||[]).map(m=>m.pos).join("; "));
+    }
+    return row.join("\t");
+  }).join("\n");
   try{
     await navigator.clipboard.writeText(header+body);
     const b=$('copyBtn'); const old=b.textContent;
