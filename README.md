@@ -5,7 +5,7 @@ for a list of keywords — with proper geo-targeting down to the city level.
 
 ## Features
 
-- **Bulk checking** — paste up to 500 keywords, one per line
+- **Bulk checking** — paste up to 200 keywords, one per line
 - **Country + city targeting** — check rankings as Google would show them in a
   specific location, not just a country
 - **Smart location detection** — automatically pulls the city/area out of each
