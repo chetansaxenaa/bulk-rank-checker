@@ -149,11 +149,11 @@
 
         <label for="apikey">Serper.dev API key</label>
         <input type="password" id="apikey" placeholder="paste your key">
-        <div class="hint">Free key (2,500 searches): <a href="https://serper.dev" target="_blank" rel="noopener">serper.dev</a> → sign up → Dashboard → API Key. Stays in this page only, never sent anywhere else.</div>
+        <div class="hint">Free at <a href="https://serper.dev" target="_blank" rel="noopener">serper.dev</a> — stays in your browser only.</div>
 
         <label for="domain">Your domain</label>
         <input type="text" id="domain" placeholder="example.com">
-        <div class="hint">Without https:// — subdomains of it also count as a match.</div>
+        <div class="hint">No https:// needed.</div>
 
         <div class="row2">
           <div>
@@ -178,19 +178,19 @@
           <div class="loc-dropdown" id="locDropdown"></div>
         </div>
         <div class="loc-chip" id="locChip"><span id="locChipText"></span><span class="x" id="locChipClear">✕ clear</span></div>
-        <div class="hint">Type any place on Earth — suggestions load as you type (via OpenStreetMap). Pick one from the list to lock in the exact location string Serper expects.</div>
+        <div class="hint">Pick a suggestion to lock it in.</div>
 
         <label class="force-row" for="forceLoc">
           <input type="checkbox" id="forceLoc" style="width:auto;accent-color:var(--pine)">
           Force this location for <u>every</u> keyword
         </label>
-        <div class="hint" id="forceHint">Off: only used as a fallback when a keyword has no city of its own. On: every keyword is checked from this exact location, ignoring smart detection below.</div>
+        <div class="hint" id="forceHint">Off: used only as fallback. On: applies to all keywords.</div>
 
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:13px;color:var(--ink)">
           <input type="checkbox" id="autoLoc" checked style="width:auto;accent-color:var(--pine)">
           Smart location: detect city from each keyword
         </label>
-        <div class="hint">Works worldwide — any city, town, or village in any country. "best dentist in jaipur" → checked from Jaipur; "plumber springfield il" → checked from Springfield, Illinois. Unknown places are resolved live via OpenStreetMap.</div>
+        <div class="hint">Works worldwide, e.g. "dentist in jaipur" → checked from Jaipur.</div>
 
         <label for="keywords">Keywords — one per line</label>
         <textarea id="keywords" placeholder="best running shoes&#10;buy laptop online&#10;seo services near me"></textarea>
@@ -563,8 +563,8 @@ function syncForceLocUI(){
   const forced = $('forceLoc').checked;
   $('autoLoc').disabled = forced;
   $('forceHint').textContent = forced
-    ? "On: every keyword will be checked from this exact location, ignoring smart detection below."
-    : "Off: only used as a fallback when a keyword has no city of its own. On: every keyword is checked from this exact location, ignoring smart detection below.";
+    ? "On: applies to all keywords, smart detection skipped."
+    : "Off: used only as fallback. On: applies to all keywords.";
 }
 $('forceLoc').addEventListener('change', syncForceLocUI);
 syncForceLocUI();
